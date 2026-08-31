@@ -47,8 +47,9 @@ The model sees `mcp__github__create_issue`, `mcp__web__search`, … — the same
 | `failOnStartupError` | both | no | Reject plugin activation when initial connection or tool synchronization fails (default `false`) |
 | `reconnect.enabled` | both | no | Reconnect automatically after a lost connection (default `true`) |
 | `reconnect.initialDelayMs` | both | no | First reconnect delay in ms; doubles per consecutive failed attempt (default 500) |
-| `reconnect.maxDelayMs` | both | no | Backoff ceiling in ms; also the uptime after which the attempt budget resets (default 30000) |
+| `reconnect.maxDelayMs` | both | no | Backoff ceiling in ms; also the uptime after which the attempt budget resets ( default 30000) |
 | `reconnect.maxAttempts` | both | no | Consecutive failed attempts per outage before giving up for good (default 10) |
+| `refreshIntervalMs` | both | no | Periodic tool-list refresh interval in ms; 0 = disabled (default 0). Useful for Streamable HTTP servers whose restart is not detected by transport-level `onclose` |
 
 ## Tool naming
 
@@ -112,6 +113,6 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 - **Tools are the only bridged MCP capability** — Resources and Prompts have no harness consumer and are deferred.
 - **Startup timeout is inherited from the MCP SDK** — DSH does not yet expose a connection/discovery timeout. Each initialize or paginated `tools/list` request uses the SDK's 60-second default, so an unresponsive server or cursor chain can delay both activation and teardown while the initial synchronization settles.
-- **Reconnect triggers on transport close** — a crashed stdio child fires it; Streamable HTTP failures surface per request and through the SDK transport's own SSE-stream recovery, so an unreachable HTTP server is retried per call rather than respawned by the supervisor.
+- **Reconnect triggers on transport close** — a crashed stdio child fires it; Streamable HTTP failures surface per request and through the SDK transport's own SSE-stream recovery, so an unreachable HTTP server is retried per call rather than respawned by the supervisor. Set `refreshIntervalMs` to a positive value for periodic `tools/list` polling that detects server restarts and re-syncs tools even when the transport connection remains open.
 - **Image is the only durable rich-result bridge** — PNG, JPEG, WebP, and GIF can enter Native context after exact capability proof. Audio and embedded-resource payloads remain execution-local with explicit diagnostics, while resource links preserve only their name and URI as text.
 - **Unsupported MCP output schemas are not enforced** — `structuredContent` falls back to `JsonValue` when the advertised schema uses vocabulary outside the harness subset.

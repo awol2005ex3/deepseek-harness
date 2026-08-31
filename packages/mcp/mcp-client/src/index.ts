@@ -70,6 +70,13 @@ export interface StdioConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /**
+   * Periodic tool-list refresh interval in milliseconds. When set to a positive
+   * value the supervisor re-fetches `tools/list` on every tick and atomically
+   * swaps registrations — useful for Streamable HTTP servers whose restart is
+   * not detected by the transport-level `onclose` signal. Default 0 (disabled).
+   */
+  refreshIntervalMs?: number
 }
 
 /** Config for connecting to an MCP server over Streamable HTTP (SSE). */
@@ -92,6 +99,13 @@ export interface StreamableHttpConfig {
   failOnStartupError: boolean
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
+  /**
+   * Periodic tool-list refresh interval in milliseconds. When set to a positive
+   * value the supervisor re-fetches `tools/list` on every tick and atomically
+   * swaps registrations — useful for Streamable HTTP servers whose restart is
+   * not detected by the transport-level `onclose` signal. Default 0 (disabled).
+   */
+  refreshIntervalMs?: number
 }
 
 /** Configuration for one stdio or Streamable HTTP MCP server. */
@@ -115,6 +129,7 @@ export const Config = z.union([
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
     reconnect: Reconnect,
+    refreshIntervalMs: z.number().min(0).default(0),
   }),
   z.object({
     transport: z.const('streamable-http'),
@@ -124,6 +139,7 @@ export const Config = z.union([
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
     reconnect: Reconnect,
+    refreshIntervalMs: z.number().min(0).default(0),
   }),
 ]) as unknown as z<Config>
 

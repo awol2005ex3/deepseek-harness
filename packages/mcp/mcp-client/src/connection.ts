@@ -142,6 +142,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   /** Live tool registrations owned by this server; only {@link enqueueSync} and dispose swap it. */
   let disposers: ToolDisposers = new Map()
   let reconnectTimer: NodeJS.Timeout | undefined
+  let refreshTimer: NodeJS.Timeout | undefined
   /** Consecutive failed connection attempts within the current outage. */
   let failedAttempts = 0
   /** When the current generation finished connect + initial sync; undefined while down. */
@@ -172,6 +173,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   /** One disconnect decision per generation: the isCurrent guard makes racing close/error signals idempotent. */
   function generationDown(generation: Client): void {
     if (!isCurrent(generation)) return
+    clearRefreshTimer()
     client = undefined
     clientClosed = undefined
     scheduleReconnect()
@@ -222,6 +224,46 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }, delayMs)
     // An armed reconnect timer must never hold the process open on its own.
     reconnectTimer.unref()
+  }
+
+  /** Clear the periodic refresh timer. */
+  function clearRefreshTimer(): void {
+    if (refreshTimer !== undefined) {
+      clearTimeout(refreshTimer)
+      refreshTimer = undefined
+    }
+  }
+
+  /**
+   * Start periodic tool-list refresh for the current generation. On each tick
+   * the supervisor calls {@link enqueueSync} to re-fetch the server's tool list
+   * and atomically swap registrations. A fetch failure (server unreachable or
+   * session expired) triggers {@link generationDown} so the supervisor enters
+   * its reconnect loop.
+   *
+   * The timer is one-shot with a recursive tail so the async enqueue never
+   * overlaps with the next tick. Cancelled on disconnect, reconnect, and
+   * disposal.
+   */
+  function startRefreshTimer(generation: Client): void {
+    if (config.refreshIntervalMs === undefined || config.refreshIntervalMs <= 0) return
+    refreshTimer = setTimeout(() => {
+      void (async () => {
+        refreshTimer = undefined
+        if (!isCurrent(generation)) return
+        try {
+          await enqueueSync(generation)
+        } catch {
+          // Fetch-phase failure: the server may have restarted or become
+          // unreachable.  Treat as a transport loss so the supervisor enters
+          // its reconnect loop and publishes a fresh tool generation.
+          generationDown(generation)
+          return
+        }
+        if (isCurrent(generation)) startRefreshTimer(generation)
+      })()
+    }, config.refreshIntervalMs)
+    refreshTimer.unref()
   }
 
   /**
@@ -301,6 +343,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
     if (!isCurrent(generation)) return
     connectedAt = Date.now()
+    startRefreshTimer(generation)
     if (failedAttempts > 0) ctx.logger.info(`${label}: reconnected and re-synced tools (attempt ${failedAttempts}/${policy.maxAttempts})`)
   }
 
@@ -326,6 +369,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     ready,
     async dispose(): Promise<void> {
       disposed = true
+      clearRefreshTimer()
       if (reconnectTimer !== undefined) {
         clearTimeout(reconnectTimer)
         reconnectTimer = undefined
