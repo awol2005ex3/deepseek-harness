@@ -17,12 +17,12 @@ afterEach(() => {
 
 describe('createDownload', () => {
   it('preflights the authenticated file route and hands it to the browser when it answers ok', async () => {
-    const preflight = vi.fn(() => Promise.resolve(head(200)))
+    const preflight = vi.fn((_url: string, _init: RequestInit) => Promise.resolve(head(200)))
     const save = vi.fn()
     const signal = new AbortController().signal
     const outcome = await createDownload(preflight, save)(FILE, 'report.bin', signal)
     expect(outcome).toEqual({ kind: 'started' })
-    const url = new URL(preflight.mock.calls[0]![0] as string)
+    const url = new URL(preflight.mock.calls[0]![0])
     expect(url.pathname).toBe('/api/file')
     expect(url.searchParams.get('path')).toBe(FILE)
     expect(preflight).toHaveBeenCalledWith(expect.any(String), { method: 'HEAD', signal })
@@ -56,12 +56,13 @@ describe('createDownload', () => {
   })
 
   it('saves through an anchor click by default', async () => {
-    const click = vi.fn()
-    const anchor = { href: '', download: '', click }
-    vi.spyOn(document, 'createElement').mockReturnValue(anchor as unknown as HTMLAnchorElement)
+    let saved: { href: string; download: string } | undefined
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved = { href: this.href, download: this.download }
+    })
     await createDownload(() => Promise.resolve(head(200)))(FILE, 'report.bin', new AbortController().signal)
-    expect(anchor.href).toContain('/api/file?path=')
-    expect(anchor.download).toBe('report.bin')
+    expect(saved?.href).toContain('/api/file?path=')
+    expect(saved?.download).toBe('report.bin')
     expect(click).toHaveBeenCalledTimes(1)
   })
 
