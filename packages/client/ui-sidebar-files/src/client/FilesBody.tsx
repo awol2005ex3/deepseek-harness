@@ -4,11 +4,13 @@
  * Everything the tree keeps lives in its store, keyed by tab; everything it asks
  * for goes through its injected face. The component itself only decides what to
  * draw for each absolute path and what a click means: a directory toggles, a
- * file opens through the owner's `tabActions` for a `file:` viewer to claim, and
- * anything else is shown but refuses to open. The header uses the shared
- * PathLabel for the root, followed by reload and workspace directory actions.
+ * file opens through the owner's `tabActions` for a `file:` viewer to claim and
+ * offers its own save through the authenticated file route, and anything else is
+ * shown but refuses to open. A save that the file route refused is reported under
+ * the row that asked for it. The header uses the shared PathLabel for the root,
+ * followed by reload and workspace directory actions.
  */
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import type { RemoteFailure } from '@deepseek-ai/dsh-api-remotes/client'
@@ -16,13 +18,14 @@ import type {
   PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore, TranslateNS,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  FileTypeIcon, IconFolderCloseRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Tooltip, classifyFileType,
+  FileTypeIcon, IconDownloadOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
+  IconRefreshOutlineRegular, Tooltip, classifyFileType,
   IconPauseOutlineRegular, IconPlayOutlineRegular, PathLabel,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path'
 import type { WorkspaceDirectoryEntry } from '@deepseek-ai/dsh-api-workspace-files/types'
 import { childPath } from './face.ts'
-import type { FilesInjected } from './face.ts'
+import type { DownloadFailure, DownloadOutcome, FilesInjected } from './face.ts'
 import type {} from './locales.ts'
 import type { FilesTabState, createFilesStore } from './store.ts'
 import css from './FilesBody.module.css'
@@ -69,12 +72,74 @@ export function failureLine(t: TranslateNS<'sidebarFiles'>, failure: RemoteFailu
   }
 }
 
-/** What every level shares: the tab's tree and the two gestures. */
+/** What every level shares: the tab's tree and its gestures. */
 interface TreeContext {
   readonly state: FilesTabState
   readonly onToggle: (parent: string, path: string) => void
   readonly onOpen: (path: string) => void
+  readonly onDownload: (path: string, name: string) => Promise<DownloadOutcome>
   readonly t: TranslateNS<'sidebarFiles'>
+}
+
+/**
+ * Say why the file route would not hand a file to the browser, in terms of the
+ * file. Unlike a listing failure, a refusal has no code to carry: the route
+ * answers with a status, which the face classes.
+ * @param t - namespace-bound translate.
+ * @param reason - the class the preflight settled with.
+ * @returns the line to show under the row that asked.
+ */
+export function downloadLine(t: TranslateNS<'sidebarFiles'>, reason: DownloadFailure): string {
+  switch (reason) {
+    case 'notFound': return t('download.notFound')
+    case 'denied': return t('download.denied')
+    case 'tooLarge': return t('download.tooLarge')
+    case 'unavailable': return t('download.unavailable')
+  }
+}
+
+/** What one row's save is doing: preflighting, or refused with the reason to show. */
+type DownloadPhase = { readonly kind: 'idle' } | { readonly kind: 'busy' } | { readonly kind: 'failed'; readonly reason: DownloadFailure }
+
+/** One file's row: the open gesture, and a save that reports its own refusal. */
+function FileEntry({ parent, entry, tree }: { parent: string; entry: WorkspaceDirectoryEntry; tree: TreeContext }): ReactNode {
+  const path = childPath(parent, entry.name)
+  const [phase, setPhase] = useState<DownloadPhase>({ kind: 'idle' })
+  const inFlight = useRef(false)
+  const save = (): void => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setPhase({ kind: 'busy' })
+    void tree.onDownload(path, entry.name).then((outcome) => {
+      setPhase(outcome.kind === 'started' ? { kind: 'idle' } : { kind: 'failed', reason: outcome.reason })
+    }).finally(() => { inFlight.current = false })
+  }
+  return (
+    <li className={css.item} data-files-entry="file" data-files-path={path}>
+      <div className={css.rowShell} data-files-download={phase.kind}>
+        <button type="button" className={css.row} onClick={() => { tree.onOpen(path) }}>
+          <FileTypeIcon kind={classifyFileType(entry.name)} size={16} className={css.fileIcon} />
+          <span className={css.name}>{entry.name}</span>
+        </button>
+        <Tooltip portal label={tree.t('download')} side="top" delayMs={500}>
+          <button
+            type="button"
+            className={css.rowAction}
+            aria-label={tree.t('download')}
+            aria-busy={phase.kind === 'busy'}
+            disabled={phase.kind === 'busy'}
+            data-files-download-action
+            onClick={save}
+          >
+            <IconDownloadOutlineRegular size={14} />
+          </button>
+        </Tooltip>
+      </div>
+      {phase.kind === 'failed' && (
+        <span className={css.note} data-files-row="download-failed">{downloadLine(tree.t, phase.reason)}</span>
+      )}
+    </li>
+  )
 }
 
 /** One entry's row, and its children when it is an expanded directory. */
@@ -93,14 +158,7 @@ function Entry({ parent, entry, tree }: { parent: string; entry: WorkspaceDirect
     )
   }
   if (entry.type === 'file') {
-    return (
-      <li className={css.item} data-files-entry="file" data-files-path={path}>
-        <button type="button" className={css.row} onClick={() => { tree.onOpen(path) }}>
-          <FileTypeIcon kind={classifyFileType(entry.name)} size={16} className={css.fileIcon} />
-          <span className={css.name}>{entry.name}</span>
-        </button>
-      </li>
-    )
+    return <FileEntry parent={parent} entry={entry} tree={tree} />
   }
   return (
     <li className={css.item} data-files-entry="other" data-files-path={path}>
@@ -139,7 +197,7 @@ function Level({ path, tree }: { path: string; tree: TreeContext }): ReactNode {
 /** The file tree's body: the workspace root and whatever the reader has opened under it. */
 export function FilesBody({
   useTabInfo, sessionId, useSessions, useStore, actions,
-  start, refresh, setAutoRefresh, toggle, t, renderSlot,
+  start, refresh, setAutoRefresh, toggle, download, t, renderSlot,
 }: FilesBodyProps): ReactNode {
   const { tab } = useTabInfo()
   useEffect(() => tab.actions.bindCommands({ refresh: () => { refresh(tab.id) } }), [tab.actions, tab.id, refresh])
@@ -185,6 +243,7 @@ export function FilesBody({
     onToggle: (parent, path) => { toggle(tab.id, parent, path, state.expanded, signal) },
     // Every row is under the tree's root, so its address is session-relative.
     onOpen: (path) => { tabActions.openResource(fileAddressFor(sessionId, state.root, path)) },
+    onDownload: (path, name) => download(path, name, signal),
     t,
   }
   const reload = (): void => {

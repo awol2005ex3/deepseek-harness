@@ -1,10 +1,14 @@
 /**
  * The tree's asynchronous half: listing directories into the store.
  *
- * The component never awaits anything. It calls `start` / `refresh` / `toggle`, and
- * this face performs the listing and writes the outcome through the store's own
- * actions — the Slot-standard `inject` shape, so the session id is resolved by
- * the framework and the write set stays the store's.
+ * Everything the tree keeps lives in its store, keyed by tab. The one gesture
+ * that keeps nothing there is the file save: a refused download belongs to the
+ * row that asked for it, so it settles back to the caller instead of the store.
+ *
+ * `start` / `refresh` / `toggle` are fire-and-forget: the component calls them
+ * and this face performs the listing and writes the outcome through the store's
+ * own actions — the Slot-standard `inject` shape, so the session id is resolved
+ * by the framework and the write set stays the store's.
  *
  * The listing itself is bound here to the Client Remote face: the tree keys
  * every level by absolute path and hands the endpoint that same absolute path;
@@ -25,6 +29,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { DirLevel, createFilesStore } from './store.ts'
 import type { WorkspaceFileWatchFrame } from '@deepseek-ai/dsh-api-workspace-files/types'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+import { fileMediaUrl } from '@deepseek-ai/dsh-util-workspace-path'
 import { DirectoryNode } from './directory-node.ts'
 
 /**
@@ -99,6 +104,77 @@ export function createList(remote: WorkspaceFilesListRemote): ListWorkspaceDirec
   }
 }
 
+/** Why the file route would not serve a file for the browser to save. */
+export type DownloadFailure = 'notFound' | 'denied' | 'tooLarge' | 'unavailable'
+
+/** One save attempt: the browser took the file, or it did not and says why. */
+export type DownloadOutcome =
+  | { readonly kind: 'started' }
+  | { readonly kind: 'failed'; readonly reason: DownloadFailure }
+
+/**
+ * Save one workspace file through the authenticated file route.
+ * @param path - absolute file path, as the tree lists it.
+ * @param name - basename the browser saves under.
+ * @param signal - caller lifetime for the preflight.
+ * @returns whether the save started, and the refusal's class when it did not.
+ */
+export type DownloadWorkspaceFile = (path: string, name: string, signal: AbortSignal) => Promise<DownloadOutcome>
+
+/** HTTP carrier used for the file route's preflight. */
+type Prefetch = (input: string, init: RequestInit) => Promise<Response>
+
+/** Hand an authenticated file route to the browser's download manager. */
+type Save = (url: string, name: string) => void
+
+/** The file route's refusals this tree can name; an unlisted status is unavailability. */
+const FILE_ROUTE_REFUSALS: Partial<Record<number, DownloadFailure>> = {
+  403: 'denied',
+  404: 'notFound',
+  413: 'tooLarge',
+}
+
+/**
+ * Ask the file route for one file, then click it into the browser's downloads.
+ *
+ * The HEAD is what makes a refusal visible: without it the reader saves a file
+ * holding the route's error text. The route serves any path the Host's
+ * filesystem can read, up to its own byte cap, so a row's path is checked there
+ * rather than guessed at here.
+ * @param preflight - HTTP carrier for the file route.
+ * @param save - browser save operation for a route the file route accepted.
+ * @returns the save the tree's face performs.
+ */
+export function createDownload(
+  preflight: Prefetch = (input, init) => fetch(input, init),
+  save: Save = downloadAnchor,
+): DownloadWorkspaceFile {
+  return async (path, name, signal) => {
+    const url = fileMediaUrl(document.baseURI, path)
+    // `fileMediaUrl` rejects paths the file route cannot take: a relative path,
+    // a UNC root the `/`-joined child path can produce, and control characters.
+    if (url === undefined) return { kind: 'failed', reason: 'unavailable' }
+    // A request that never got a response has no status to classify.
+    const response = await preflight(url, { method: 'HEAD', signal }).catch(() => undefined)
+    if (response === undefined) return { kind: 'failed', reason: 'unavailable' }
+    if (!response.ok) return { kind: 'failed', reason: FILE_ROUTE_REFUSALS[response.status] ?? 'unavailable' }
+    save(url, name)
+    return { kind: 'started' }
+  }
+}
+
+/**
+ * Click a same-origin anchor at the file route, naming the saved file.
+ * @param url - authenticated file route.
+ * @param name - filename the browser saves under.
+ */
+function downloadAnchor(url: string, name: string): void {
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = name
+  anchor.click()
+}
+
 /**
  * The absolute path of one child entry.
  *
@@ -141,17 +217,26 @@ export interface FilesInjected {
    * @param signal - the tab record's lifetime.
    */
   readonly toggle: (tabId: TabId, parentPath: string, path: string, expanded: readonly string[], signal: AbortSignal) => void
+  /**
+   * Save one listed file through the authenticated file route.
+   * @param path - absolute file path.
+   * @param name - basename the browser saves under.
+   * @param signal - the tab record's lifetime.
+   */
+  readonly download: DownloadWorkspaceFile
 }
 
 /**
- * Bind the tree's face to one directory listing.
+ * Bind the tree's face to one directory listing and one file save.
  * @param list - the bound `workspaceFiles.list` call.
  * @param watch - target-scoped directory observation.
+ * @param download - the browser save over the authenticated file route.
  * @returns the Slot `inject` factory: session and bound actions in, face out.
  */
 export function filesFace(
   list: ListWorkspaceDirectory,
   watch: WatchWorkspaceDirectory,
+  download: DownloadWorkspaceFile,
 ): (sessionId: SessionId, actions: BoundActions<ReturnType<typeof createFilesStore>>) => FilesInjected {
   return (
     sessionId: SessionId,
@@ -181,6 +266,7 @@ export function filesFace(
       })
     }
     return {
+      download,
       refresh: (tabId) => { void roots.get(tabId)?.refreshTree() },
       setAutoRefresh: (tabId, enabled) => {
         actions.autoRefresh(tabId, enabled)

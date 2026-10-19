@@ -89,6 +89,80 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* A file row's two controls: the open button takes the name's width, the save
+   sits at its end. The shell holds the hover fill so the whole line reads as
+   one row, as the rows without a save control do. */
+.rowShell {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  border-radius: var(--dsw-radius-md);
+}
+
+.rowShell:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rowShell .row {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* The save control, like the shortcut reference's row actions: quiet until the
+   row is hovered or reached by keyboard, always there where hover does not exist. */
+.rowAction {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  padding: 3px;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.rowShell:hover .rowAction,
+.rowShell:focus-within .rowAction {
+  opacity: 1;
+}
+
+/* A save in flight or refused stays lit, so the row says what it is doing. */
+.rowShell:not([data-files-download='idle']) .rowAction {
+  opacity: 1;
+}
+
+.rowAction:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.rowAction:focus-visible {
+  outline: 1px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.rowAction:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.rowAction svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (hover: none) {
+  .rowAction {
+    opacity: 1;
+  }
+}
+
 /* The folder glyph rides the tertiary ink, as the workspace tree's does (ui-workspace Rows `.slot`). */
 .icon {
   flex: 0 0 auto;

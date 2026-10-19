@@ -149,13 +149,84 @@ describe('FilesBody', () => {
     const { view, script, tabActions } = mountBody()
     await act(() => script.watches.ready(ROOT))
     await act(() => script.settle({ ok: true, value: ROOT_LEVEL }))
-    fireEvent.click(view.container.querySelector(`[data-files-path="${ROOT}/README.md"] > button`)!)
+    fireEvent.click(view.container.querySelector(`[data-files-path="${ROOT}/README.md"] .row`)!)
     // Every row sits under the tree's root, so the address is the path relative to it.
     expect(tabActions.openResource).toHaveBeenCalledWith(fileAddressFor(SESSION, ROOT, `${ROOT}/README.md`))
     expect(tabActions.openResource).toHaveBeenCalledWith('dsh-resource://file/session/s-test/README.md')
     const other = view.container.querySelector(`[data-files-path="${ROOT}/pipe"]`)!
     expect(other.querySelector('button')).toBeNull()
     expect(other.querySelector('[aria-disabled="true"]')?.getAttribute('title')).toBe(zh['entry.other'])
+  })
+
+  it('offers a save on each file row only, and asks for that row by absolute path and basename', async () => {
+    const { view, script, download } = mountBody()
+    await act(() => script.watches.ready(ROOT))
+    await act(() => script.settle({ ok: true, value: ROOT_LEVEL }))
+    expect(view.getAllByRole('button', { name: zh.download }).map(button => button.closest('[data-files-path]')))
+      .toEqual([
+        view.container.querySelector(`[data-files-path="${ROOT}/.env"]`),
+        view.container.querySelector(`[data-files-path="${ROOT}/README.md"]`),
+      ])
+    fireEvent.click(view.container.querySelector(`[data-files-path="${ROOT}/README.md"] [data-files-download-action]`)!)
+    expect(download).toHaveBeenCalledWith(`${ROOT}/README.md`, 'README.md', expect.any(AbortSignal))
+    // The browser owns a started download's feedback, so the row settles back quiet.
+    await act(async () => { await Promise.resolve() })
+    expect(view.container.querySelector('[data-files-row="download-failed"]')).toBeNull()
+    expect(view.container.querySelector(`[data-files-path="${ROOT}/README.md"] [data-files-download]`)
+      ?.getAttribute('data-files-download')).toBe('idle')
+  })
+
+  it.each([
+    ['notFound', zh['download.notFound']],
+    ['denied', zh['download.denied']],
+    ['tooLarge', zh['download.tooLarge']],
+    ['unavailable', zh['download.unavailable']],
+  ] as const)('reports a refused save (%s) under its own row and nowhere else', async (reason, line) => {
+    const { view, script, download } = mountBody()
+    await act(() => script.watches.ready(ROOT))
+    await act(() => script.settle({ ok: true, value: ROOT_LEVEL }))
+    download.mockResolvedValue({ kind: 'failed', reason })
+    fireEvent.click(view.container.querySelector(`[data-files-path="${ROOT}/README.md"] [data-files-download-action]`)!)
+    await act(async () => { await Promise.resolve() })
+    const row = view.container.querySelector(`[data-files-path="${ROOT}/README.md"]`)!
+    expect(row.querySelector('[data-files-row="download-failed"]')?.textContent).toBe(line)
+    expect(row.querySelector('[data-files-download]')?.getAttribute('data-files-download')).toBe('failed')
+    expect(view.container.querySelectorAll('[data-files-row="download-failed"]')).toHaveLength(1)
+  })
+
+  it('a retry that the route accepts clears the refusal line', async () => {
+    const { view, script, download } = mountBody()
+    await act(() => script.watches.ready(ROOT))
+    await act(() => script.settle({ ok: true, value: ROOT_LEVEL }))
+    download.mockResolvedValue({ kind: 'failed', reason: 'tooLarge' })
+    const action = view.container.querySelector<HTMLButtonElement>(`[data-files-path="${ROOT}/README.md"] [data-files-download-action]`)!
+    fireEvent.click(action)
+    await act(async () => { await Promise.resolve() })
+    expect(view.container.querySelector('[data-files-row="download-failed"]')).not.toBeNull()
+    download.mockResolvedValue({ kind: 'started' })
+    fireEvent.click(action)
+    await act(async () => { await Promise.resolve() })
+    expect(view.container.querySelector('[data-files-row="download-failed"]')).toBeNull()
+  })
+
+  it('holds the save control busy for the preflight and takes no second gesture', async () => {
+    const { view, script, download } = mountBody()
+    await act(() => script.watches.ready(ROOT))
+    await act(() => script.settle({ ok: true, value: ROOT_LEVEL }))
+    const pending = Promise.withResolvers<{ kind: 'started' }>()
+    download.mockReturnValue(pending.promise)
+    const action = view.container.querySelector<HTMLButtonElement>(`[data-files-path="${ROOT}/README.md"] [data-files-download-action]`)!
+    fireEvent.click(action)
+    expect(download).toHaveBeenCalledTimes(1)
+    expect(action.disabled).toBe(true)
+    expect(action.getAttribute('aria-busy')).toBe('true')
+    expect(view.container.querySelector(`[data-files-path="${ROOT}/README.md"] [data-files-download]`)
+      ?.getAttribute('data-files-download')).toBe('busy')
+    fireEvent.click(action)
+    expect(download).toHaveBeenCalledTimes(1)
+    await act(() => { pending.resolve({ kind: 'started' }); return pending.promise })
+    expect(action.disabled).toBe(false)
+    expect(action.getAttribute('aria-busy')).toBe('false')
   })
 
   it('marks a cut listing and an empty one', async () => {

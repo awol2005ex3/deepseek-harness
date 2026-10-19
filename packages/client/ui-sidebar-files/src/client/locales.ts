@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** File-tree type name, guide entry, row states, and failure lines. */
+    /** File-tree type name, guide entry, row states, save copy, and failure lines. */
     sidebarFiles: SidebarFilesKey
   }
 }
@@ -33,6 +33,11 @@ export const zh = {
   'autoRefresh.enable': '开启自动刷新',
   'autoRefresh.disable': '关闭自动刷新',
   'entry.other': '这不是文件或目录，没法打开。',
+  download: '下载',
+  'download.notFound': '这个文件不在了。可能已被移动或删除。',
+  'download.denied': '这个文件读不了，没法下载。',
+  'download.tooLarge': '文件太大，浏览器下载不了。',
+  'download.unavailable': '下载没有完成，稍后重试。',
   'error.notFound': '这个目录不在了。可能已被移动或删除。',
   'error.outsideWorkspace': '这个目录在工作区之外，侧栏不会读取它。',
   'error.notDirectory': '这不是一个目录。',
@@ -57,6 +62,11 @@ export const en = {
   'autoRefresh.enable': 'Enable auto refresh',
   'autoRefresh.disable': 'Disable auto refresh',
   'entry.other': 'Not a file or a directory, so it cannot be opened.',
+  download: 'Download',
+  'download.notFound': 'That file is gone. It may have been moved or deleted.',
+  'download.denied': 'That file cannot be read, so it cannot be downloaded.',
+  'download.tooLarge': 'That file is too large for the browser to download.',
+  'download.unavailable': 'The download did not start. Try again later.',
   'error.notFound': 'That directory is gone. It may have been moved or deleted.',
   'error.outsideWorkspace': 'That directory is outside the workspace, so the sidebar will not read it.',
   'error.notDirectory': 'That is not a directory.',
